@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="uk">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mayki Vid Yamayki - Каталог</title>
+    
+    <!-- Підключення шрифтів -->
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800&family=Unbounded:wght@700;800&display=swap" rel="stylesheet">
+    
+    <!-- Підключення зовнішніх бібліотек (Supabase, SheetJS, JSZip) -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+    
+    <!-- Підключення твоїх стилів -->
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <div class="header">
+        <h1 class="logo">MAYKI VID YAMAYKI</h1>
+        <button class="admin-btn" onclick="toggleAdmin()">⚙️</button>
+    </div>
+
+    <!-- ТЕРМІНАЛ ПРОДАВЦЯ -->
+    <div id="seller-screen" class="screen active">
+        
+        <button class="reset-btn" onclick="resetFilters()">
+            🔄 Очистити екран для нового клієнта
+        </button>
+
+        <div class="filter-section">
+            <h3>1. Для кого шукаємо?</h3>
+            <div class="grid-2">
+                <button class="big-btn boy filter-gender" data-val="Хлопчик" onclick="toggleFilter('gender', 'Хлопчик')">👦 Хлопчик</button>
+                <button class="big-btn girl filter-gender" data-val="Дівчинка" onclick="toggleFilter('gender', 'Дівчинка')">👧 Дівчинка</button>
+            </div>
+        </div>
+
+        <div class="filter-section">
+            <h3>2. Що саме потрібно? (можна кілька)</h3>
+            <div class="grid-tags">
+                <button class="big-btn tag filter-category" data-val="Майка кольорова" onclick="toggleFilter('category', 'Майка кольорова')">Майки колір.</button>
+                <button class="big-btn tag filter-category" data-val="Майка біла" onclick="toggleFilter('category', 'Майка біла')">Майки білі</button>
+                <button class="big-btn tag filter-category" data-val="Труси" onclick="toggleFilter('category', 'Труси')">Труси</button>
+                <button class="big-btn tag filter-category" data-val="Труси білі" onclick="toggleFilter('category', 'Труси білі')">Труси білі</button>
+                <button class="big-btn tag filter-category" data-val="Труси-шорти" onclick="toggleFilter('category', 'Труси-шорти')">Труси-шорти</button>
+                <button class="big-btn tag filter-category" data-val="Боксери" onclick="toggleFilter('category', 'Боксери')">Боксери</button>
+                <button class="big-btn tag filter-category" data-val="Топ" onclick="toggleFilter('category', 'Топ')">Топи</button>
+                <button class="big-btn tag filter-category" data-val="Комплекти" onclick="toggleFilter('category', 'Комплекти')">Комплекти</button>
+            </div>
+        </div>
+
+        <div class="filter-section">
+            <h3>3. Розмір</h3>
+            <div class="grid-tags">
+                <button class="big-btn size filter-size" data-val="0" onclick="toggleFilter('size', '0')">0 (86-92 см)</button>
+                <button class="big-btn size filter-size" data-val="1" onclick="toggleFilter('size', '1')">1 (98-104 см)</button>
+                <button class="big-btn size filter-size" data-val="2" onclick="toggleFilter('size', '2')">2 (110-116 см)</button>
+                <button class="big-btn size filter-size" data-val="3" onclick="toggleFilter('size', '3')">3 (122-128 см)</button>
+                <button class="big-btn size filter-size" data-val="4" onclick="toggleFilter('size', '4')">4 (134-140 см)</button>
+                <button class="big-btn size filter-size" data-val="5" onclick="toggleFilter('size', '5')">5 (146-152 см)</button>
+                <button class="big-btn size filter-size" data-val="6" onclick="toggleFilter('size', '6')">6 (158-164 см)</button>
+                <button class="big-btn size filter-size" data-val="7" onclick="toggleFilter('size', '7')">7 (170-176 см)</button>
+                <button class="big-btn size filter-size" data-val="8" onclick="toggleFilter('size', '8')">8 (176-182 см)</button>
+            </div>
+        </div>
+
+        <div class="catalog-header">
+            <h3 id="catalog-title">Знайдені товари</h3>
+            <button class="select-all-btn" onclick="selectAllFiltered()">☑️ Обрати всі</button>
+        </div>
+
+        <div id="products-container" class="products-grid">
+            <div class="empty-state">
+                👆 Оберіть фільтри вище, щоб побачити товари
+            </div>
+        </div>
+    </div>
+
+    <!-- ПАНЕЛЬ КОШИКА -->
+    <div class="action-bar" id="action-bar" style="display: none;">
+        <div class="selected-text">
+            Обрано: <span id="selected-count" style="color: #FF2A85; font-size: 1.3rem;">0</span><span style="color:#888; font-size:0.9rem;">/10</span>
+        </div>
+        <button class="share-btn" onclick="shareToInstagram()">Надіслати клієнту ↗</button>
+    </div>
+
+    <!-- АДМІНКА -->
+    <div id="admin-screen" class="screen">
+        <div class="admin-panel">
+            <h2 style="margin-top: 0;">1. Оновлення бази</h2>
+            <input type="file" id="excel-file" accept=".xlsx, .xls" style="margin-bottom: 15px; font-family: Nunito;">
+            <button class="btn-upload" onclick="processExcel()">🚀 ОНОВИТИ БАЗУ (ТОРГСОФТ)</button>
+            <div id="upload-status" style="margin-top: 15px; font-weight: 700; color: #34C759;"></div>
+        </div>
+
+        <div class="admin-panel" style="margin-top: 20px;">
+            <h2 style="margin-top: 0;">2. Завантаження фото</h2>
+            <input type="file" id="photo-files" multiple accept="image/*" style="margin-bottom: 15px; font-family: Nunito;">
+            <button class="btn-upload" style="background: #00C2FF;" onclick="uploadPhotosToSupabase()">☁️ ЗАВАНТАЖИТИ ФОТО НА СЕРВЕР</button>
+            <div id="photo-status" style="margin-top: 15px; font-weight: 700; color: #00C2FF;"></div>
+        </div>
+    </div>
+
+    <!-- Підключення твого скрипта В САМОМУ КІНЦІ -->
+    <script src="script.js"></script>
+</body>
+</html>
