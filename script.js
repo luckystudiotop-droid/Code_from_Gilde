@@ -119,51 +119,54 @@ async function shareToInstagram() {
     if (selectedProducts.size === 0) return;
     const actionBtn = document.querySelector('.share-btn');
     const originalText = actionBtn.innerText;
-    actionBtn.innerText = "⏳ Формуємо..."; actionBtn.disabled = true;
+    actionBtn.innerText = "⏳ Завантажуємо..."; 
+    actionBtn.disabled = true;
 
     let textToCopy = "Вітаємо! Ось що є в наявності за вашим запитом:\n\n";
-    let filesArray = []; let zip = new JSZip(); let hasImages = false;
+    let downloadedCount = 0;
 
     try {
         for (let id of selectedProducts) {
             let p = allProducts.find(x => x.id === id);
             textToCopy += `▪️ Арт. ${p.base_model} (${p.color}), розмір ${p.size_name} — ${p.price} грн\n`;
+            
             if (p.photo_url) {
                 try {
+                    // Витягуємо фото з сервера і перетворюємо на файл для завантаження
                     const response = await fetch(p.photo_url);
                     const blob = await response.blob();
-                    const fileName = `${p.sku}.jpg`;
-                    filesArray.push(new File([blob], fileName, { type: blob.type }));
-                    zip.file(fileName, blob); hasImages = true;
-                } catch (e) { console.error("Помилка завантаження фото", e); }
+                    const blobUrl = URL.createObjectURL(blob);
+                    
+                    // Створюємо невидиме посилання для авто-збереження в галерею
+                    const link = document.createElement('a');
+                    link.href = blobUrl;
+                    link.download = `${p.base_model}_${p.color}.jpg`;
+                    document.body.appendChild(link);
+                    link.click();
+                    document.body.removeChild(link);
+                    URL.revokeObjectURL(blobUrl);
+                    
+                    downloadedCount++;
+                    // Невелика пауза, щоб браузер не заблокував масове завантаження
+                    await new Promise(resolve => setTimeout(resolve, 300));
+                } catch (e) {
+                    console.error("Помилка завантаження фото", e);
+                }
             }
         }
         
+        // Копіюємо текст у буфер обміну
         await navigator.clipboard.writeText(textToCopy);
         
-        if (navigator.canShare && navigator.canShare({ files: filesArray })) {
-            try { await navigator.share({ files: filesArray, title: 'Фото товару' }); } 
-            catch(e) { if (e.name !== "AbortError") await downloadZip(zip, hasImages); }
-        } else {
-            await downloadZip(zip, hasImages);
-        }
-    } catch (err) { alert("Помилка."); } 
-    finally { actionBtn.innerText = originalText; actionBtn.disabled = false; resetFilters(); }
-}
-
-async function downloadZip(zip, hasImages) {
-    if (!hasImages) return alert("Текст скопійовано! Фото відсутні.");
-    const now = new Date(); const dateKey = `${String(now.getDate()).padStart(2,'0')}_${String(now.getMonth()+1).padStart(2,'0')}`;
-    let savedDate = localStorage.getItem('archive_date');
-    let counter = parseInt(localStorage.getItem('archive_counter') || '0');
-    if (savedDate !== dateKey) { savedDate = dateKey; counter = 1; } else { counter++; }
-    localStorage.setItem('archive_date', savedDate); localStorage.setItem('archive_counter', counter);
-    const zipName = `${dateKey}_${counter}.zip`;
-    
-    const content = await zip.generateAsync({type: "blob"});
-    const link = document.createElement('a'); link.href = URL.createObjectURL(content); link.download = zipName;
-    document.body.appendChild(link); link.click(); document.body.removeChild(link);
-    alert(`✅ Текст із цінами скопійовано!\nАрхів "${zipName}" завантажено.`);
+        alert(`✅ Текст із цінами скопійовано!\n📥 Збережено в галерею фото: ${downloadedCount} шт.\n\nПерейдіть в Instagram, вставте текст і додайте фото.`);
+        
+    } catch (err) { 
+        alert("Виникла помилка при копіюванні тексту."); 
+    } finally { 
+        actionBtn.innerText = originalText; 
+        actionBtn.disabled = false; 
+        resetFilters(); 
+    }
 }
 
 function toggleAdmin() {
