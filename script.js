@@ -13,7 +13,16 @@ const STORAGE_LIMIT_MB = 1024;      // безкоштовний ліміт Supab
 const STORAGE_WARN_RATIO = 0.8;     // попередження з 80%
 
 let allProducts = [];
-let selectedProducts = new Set();
+const MAX_SELECTED = 10;                // ліміт карток (= фото) для одного повідомлення
+let selectedGroups = new Map();         // ключ "модель|колір" -> { group, sizes }
+let currentGroups = new Map();          // картки, що зараз на екрані
+const cardButtons = new Map();          // ключ -> кнопка "Додати" (щоб не перемальовувати весь список)
+
+// Підписи розмірів для картки й тексту клієнту
+const SIZE_YEARS = { 0: '0-1 р.', 1: '1-2 р.', 2: '3-4 р.', 3: '5-6 р.', 4: '7-8 р.', 5: '9-10 р.', 6: '11-12 р.', 7: '13-14 р.', 8: '15-16 р.' };
+const NO_PHOTO_SRC = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300"><rect width="300" height="300" fill="#EEEEF2"/>' +
+    '<text x="150" y="158" font-family="Nunito, sans-serif" font-size="26" font-weight="700" fill="#9A9AA5" text-anchor="middle">Немає фото</text></svg>');
 let filters = { gender: null, categories: new Set(), size: null };
 
 // Читає всі рядки products сторінками по 1000 (ліміт Supabase на один запит)
@@ -80,127 +89,214 @@ function toggleFilter(type, value) {
 }
 
 function resetFilters() {
-    filters.gender = null; filters.categories.clear(); filters.size = null; selectedProducts.clear();
+    filters.gender = null; filters.categories.clear(); filters.size = null; selectedGroups.clear();
     document.querySelectorAll('.big-btn').forEach(btn => btn.classList.remove('active'));
     updateActionBar(); renderProducts();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
 }
 
+function sizeLabel(p) {
+    return SIZE_YEARS[p.size_index] || p.size_name || '—';
+}
+
+function formatPrice(n) {
+    return `${Number(n).toLocaleString('uk-UA')} грн`;
+}
+
+// Товари в наявності після фільтрів статі й категорії
 function getFilteredProducts() {
-    let filtered = allProducts.filter(p => p.stock > 0);
+    let filtered = allProducts.filter(p => (p.stock || 0) > 0);
     if (filters.gender) filtered = filtered.filter(p => p.gender === filters.gender);
     if (filters.categories.size > 0) filtered = filtered.filter(p => filters.categories.has(p.category));
-    if (filters.size) filtered = filtered.filter(p => p.size_index === parseInt(filters.size));
-    // Товари без фото — в самий кінець (sort стабільний, порядок решти не змінюється)
-    filtered.sort((a, b) => (a.photo_url ? 0 : 1) - (b.photo_url ? 0 : 1));
     return filtered;
 }
 
-function selectAllFiltered() {
-    const filtered = getFilteredProducts();
-    if (filtered.length === 0) return;
-    
-    const limit = 10;
-    const toAdd = filtered.slice(0, limit);
-    toAdd.forEach(p => selectedProducts.add(p.id));
-    
-    updateActionBar();
-    renderProducts();
-    
-    if (filtered.length > limit) {
-        alert("Обрано перші 10 товарів (це ліміт для одного повідомлення в Інстаграм).");
+// Одна картка = модель + колір; розміри всередині
+function buildGroups() {
+    const map = new Map();
+    getFilteredProducts().forEach(p => {
+        const key = photoKey(p.base_model, normColor(p.color));
+        if (!map.has(key)) map.set(key, { key, base: p.base_model, color: p.color, gender: p.gender, photo: p.photo_url, items: [] });
+        const g = map.get(key);
+        g.items.push(p);
+        if (!g.photo && p.photo_url) g.photo = p.photo_url;
+    });
+
+    let groups = [...map.values()];
+    groups.forEach(g => g.items.sort((a, b) => (a.size_index ?? 99) - (b.size_index ?? 99)));
+
+    if (filters.size !== null) {
+        const size = parseInt(filters.size, 10);
+        groups = groups.filter(g => g.items.some(p => p.size_index === size));
     }
+    // Без фото — в самий кінець (sort стабільний)
+    groups.sort((a, b) => (a.photo ? 0 : 1) - (b.photo ? 0 : 1));
+    return groups;
+}
+
+function cardPriceText(g) {
+    let items = g.items;
+    if (filters.size !== null) {
+        const size = parseInt(filters.size, 10);
+        const exact = items.filter(p => p.size_index === size);
+        if (exact.length) items = exact;
+    }
+    const prices = items.map(p => Number(p.price));
+    const min = Math.min(...prices), max = Math.max(...prices);
+    return min === max ? formatPrice(min) : `${Number(min).toLocaleString('uk-UA')}–${formatPrice(max)}`;
+}
+
+function selectButtonState(btn, key) {
+    const sel = selectedGroups.get(key);
+    btn.classList.toggle('selected', !!sel);
+    if (!sel) { btn.textContent = '+ Додати'; return; }
+    btn.textContent = '✅ Обрано';
 }
 
 function renderProducts() {
     const container = document.getElementById('products-container');
     const catalogTitle = document.getElementById('catalog-title');
+    currentGroups = new Map();
+    cardButtons.clear();
 
-    if (!filters.gender && filters.categories.size === 0 && !filters.size) {
+    if (!filters.gender && filters.categories.size === 0 && filters.size === null) {
         container.innerHTML = '<div class="empty-state">👆 Оберіть фільтри вище, щоб побачити товари</div>';
         catalogTitle.innerText = 'Знайдені товари';
         return;
     }
 
-    const filtered = getFilteredProducts();
-    catalogTitle.innerText = `Знайдені товари (${filtered.length} шт.)`;
-
-    if (filtered.length === 0) {
+    const groups = buildGroups();
+    catalogTitle.innerText = `Знайдені товари (${groups.length})`;
+    if (!groups.length) {
         container.innerHTML = '<div class="empty-state">Товарів за цим запитом немає 😔</div>';
         return;
     }
 
-    container.innerHTML = '';
-    filtered.forEach(p => {
-        const priceClass = p.gender === 'Дівчинка' ? 'girl-price' : 'boy-price';
-        const stockClass = p.stock > 2 ? 'stock-ok' : 'stock-low';
-        const isSelected = selectedProducts.has(p.id);
-        const photoSrc = p.photo_url || 'https://via.placeholder.com/300x300?text=Немає+фото';
+    const activeSize = filters.size !== null ? parseInt(filters.size, 10) : null;
+    const fragment = document.createDocumentFragment();
+
+    groups.forEach(g => {
+        currentGroups.set(g.key, g);
+        const priceClass = g.gender === 'Дівчинка' ? 'girl-price' : 'boy-price';
+        const chips = g.items.map(p => `
+            <span class="size-chip ${p.size_index === activeSize ? 'active' : ''} ${p.stock <= 1 ? 'low' : ''}">
+                <b>${escapeHtml(sizeLabel(p))}</b><small>${p.stock} шт</small>
+            </span>`).join('');
 
         const card = document.createElement('div');
         card.className = 'product-card';
         card.innerHTML = `
-            <img src="${photoSrc}" loading="lazy" class="product-img" alt="${p.name}">
+            <img src="${g.photo || NO_PHOTO_SRC}" loading="lazy" decoding="async" class="product-img ${g.photo ? '' : 'no-photo'}"
+                 alt="Арт. ${escapeHtml(g.base)} ${escapeHtml(g.color || '')}">
             <div class="product-info">
-                <div class="p-meta">Арт. ${p.base_model} • ${p.color || ''}</div>
-                <div class="p-size">Розмір: ${p.size_name}</div>
-                <div class="p-price ${priceClass}">${p.price} грн</div>
-                <div class="product-stock ${stockClass}">В наявності: ${p.stock} шт</div>
-                <button class="select-btn ${isSelected ? 'selected' : ''}" onclick="toggleSelect('${p.id}')">
-                    ${isSelected ? '✅ ОБРАНО' : '+ Додати'}
-                </button>
-            </div>
-        `;
-        container.appendChild(card);
+                <div class="p-meta">Арт. ${escapeHtml(g.base)}</div>
+                <div class="p-color">${escapeHtml(g.color || 'Без кольору')}</div>
+                <div class="p-price ${priceClass}">${cardPriceText(g)}</div>
+                <div class="size-chips">${chips}</div>
+                <button type="button" class="select-btn"></button>
+            </div>`;
+        const btn = card.querySelector('.select-btn');
+        btn.dataset.key = g.key;
+        selectButtonState(btn, g.key);
+        cardButtons.set(g.key, btn);
+        fragment.appendChild(card);
     });
+
+    container.innerHTML = '';
+    container.appendChild(fragment);
 }
 
-function toggleSelect(id) {
-    if (selectedProducts.has(id)) {
-        selectedProducts.delete(id);
+// Один обробник на весь список (працює і для миші, і для дотику)
+document.getElementById('products-container').addEventListener('click', e => {
+    const btn = e.target.closest('.select-btn');
+    if (btn && btn.dataset.key) toggleSelect(btn.dataset.key);
+});
+
+function addGroup(key) {
+    const g = currentGroups.get(key);
+    if (!g) return false;
+    const size = filters.size !== null ? parseInt(filters.size, 10) : null;
+    const sizes = size !== null && g.items.some(p => p.size_index === size)
+        ? [size]
+        : g.items.map(p => p.size_index);
+    selectedGroups.set(key, { group: g, sizes });
+    return true;
+}
+
+function toggleSelect(key) {
+    if (selectedGroups.has(key)) {
+        selectedGroups.delete(key);
     } else {
-        if (selectedProducts.size >= 10) { alert("⚠️ Максимум 10 фото за раз!"); return; }
-        selectedProducts.add(id);
+        if (selectedGroups.size >= MAX_SELECTED) { alert(`⚠️ Максимум ${MAX_SELECTED} товарів за раз!`); return; }
+        addGroup(key);
     }
-    updateActionBar(); renderProducts();
+    const btn = cardButtons.get(key);
+    if (btn) selectButtonState(btn, key);
+    updateActionBar();
+}
+
+function selectAllFiltered() {
+    if (!currentGroups.size) return;
+    let skipped = 0;
+    for (const key of currentGroups.keys()) {
+        if (selectedGroups.has(key)) continue;
+        if (selectedGroups.size >= MAX_SELECTED) { skipped++; continue; }
+        addGroup(key);
+        const btn = cardButtons.get(key);
+        if (btn) selectButtonState(btn, key);
+    }
+    updateActionBar();
+    if (skipped) alert(`Обрано перші ${MAX_SELECTED} товарів (ліміт для одного повідомлення в Інстаграм).`);
 }
 
 function updateActionBar() {
     const bar = document.getElementById('action-bar');
-    document.getElementById('selected-count').innerText = selectedProducts.size;
-    bar.style.display = selectedProducts.size > 0 ? 'flex' : 'none';
+    document.getElementById('selected-count').innerText = selectedGroups.size;
+    const onSeller = document.getElementById('seller-screen').classList.contains('active');
+    bar.style.display = selectedGroups.size > 0 && onSeller ? 'flex' : 'none';
+}
+
+// Рядок для клієнта: "▪️ Арт. 2332 (Сірий) — розміри: 3-4 р., 5-6 р. — 150 грн"
+function customerLine(group, sizes) {
+    const items = group.items.filter(p => sizes.includes(p.size_index));
+    const title = `▪️ Арт. ${group.base}${group.color ? ` (${group.color})` : ''}`;
+    const prices = new Set(items.map(p => Number(p.price)));
+    if (prices.size === 1) {
+        const word = items.length === 1 ? 'розмір' : 'розміри';
+        return `${title} — ${word}: ${items.map(sizeLabel).join(', ')} — ${formatPrice(items[0].price)}`;
+    }
+    return `${title} — ${items.map(p => `${sizeLabel(p)} — ${formatPrice(p.price)}`).join('; ')}`;
 }
 
 async function shareToInstagram() {
-    if (selectedProducts.size === 0) return;
+    if (selectedGroups.size === 0) return;
     const actionBtn = document.querySelector('.share-btn');
     const originalText = actionBtn.innerText;
-    actionBtn.innerText = "⏳ Завантажуємо..."; 
+    actionBtn.innerText = "⏳ Завантажуємо...";
     actionBtn.disabled = true;
 
     let textToCopy = "Вітаємо! Ось що є в наявності за вашим запитом:\n\n";
     let downloadedCount = 0;
 
     try {
-        for (let id of selectedProducts) {
-            let p = allProducts.find(x => x.id === id);
-            textToCopy += `▪️ Арт. ${p.base_model} (${p.color}), розмір ${p.size_name} — ${p.price} грн\n`;
-            
-            if (p.photo_url) {
+        for (const { group, sizes } of selectedGroups.values()) {
+            textToCopy += customerLine(group, sizes) + '\n';
+
+            if (group.photo) {
                 try {
                     // Витягуємо фото з сервера і перетворюємо на файл для завантаження
-                    const response = await fetch(p.photo_url);
+                    const response = await fetch(group.photo);
                     const blob = await response.blob();
                     const blobUrl = URL.createObjectURL(blob);
-                    
-                    // Створюємо невидиме посилання для авто-збереження в галерею
+
                     const link = document.createElement('a');
                     link.href = blobUrl;
-                    link.download = `${p.base_model}_${p.color}.jpg`;
+                    link.download = `${group.base}_${group.color || 'фото'}.jpg`;
                     document.body.appendChild(link);
                     link.click();
                     document.body.removeChild(link);
                     URL.revokeObjectURL(blobUrl);
-                    
+
                     downloadedCount++;
                     // Невелика пауза, щоб браузер не заблокував масове завантаження
                     await new Promise(resolve => setTimeout(resolve, 300));
@@ -209,18 +305,15 @@ async function shareToInstagram() {
                 }
             }
         }
-        
-        // Копіюємо текст у буфер обміну
+
         await navigator.clipboard.writeText(textToCopy);
-        
-        alert(`✅ Текст із цінами скопійовано!\n📥 Збережено в галерею фото: ${downloadedCount} шт.\n\nПерейдіть в Instagram, вставте текст і додайте фото.`);
-        
-    } catch (err) { 
-        alert("Виникла помилка при копіюванні тексту."); 
-    } finally { 
-        actionBtn.innerText = originalText; 
-        actionBtn.disabled = false; 
-        resetFilters(); 
+        alert(`✅ Текст із цінами скопійовано!\n📥 Збережено фото: ${downloadedCount} шт.\n\nПерейдіть в Instagram, вставте текст і додайте фото.`);
+    } catch (err) {
+        alert("Виникла помилка при копіюванні тексту.");
+    } finally {
+        actionBtn.innerText = originalText;
+        actionBtn.disabled = false;
+        resetFilters();
     }
 }
 

@@ -57,7 +57,7 @@ h1, h2, h3 { font-family: 'Unbounded', sans-serif; }
 .stock-ok { background: #F0FDF4; color: #166534; }
 .stock-low { background: #FFF7ED; color: #C2410C; }
 
-.select-btn { margin-top: 10px; padding: 12px; border-radius: 16px; border: none; background: #F5F5F7; font-weight: 800; color: #555; cursor: pointer; font-size: 0.95rem; transition: 0.2s; }
+.select-btn { margin-top: auto; min-height: 44px; line-height: 1.2; padding: 12px; border-radius: 16px; border: none; background: #F5F5F7; font-weight: 800; color: #555; cursor: pointer; font-size: 0.95rem; transition: 0.2s; }
 .select-btn.selected { background: #34C759; color: white; box-shadow: 0 4px 12px rgba(52, 199, 89, 0.3); }
 
 /* Плаваюча панель "Кошик" (iOS Style) */
@@ -101,3 +101,47 @@ h1, h2, h3 { font-family: 'Unbounded', sans-serif; }
 
 /* Імпорт */
 .btn-apply { background: #34C759; margin-top: 15px; }
+
+/* Етап 4: картка = модель + колір */
+.p-color { font-weight: 800; font-size: 0.95rem; color: #2C2C35; line-height: 1.25; }
+.product-img.no-photo { animation: none; background: #EEEEF2; }
+.size-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 12px; }
+.size-chip { display: flex; flex-direction: column; align-items: center; min-width: 52px; padding: 5px 6px; border-radius: 12px; background: #F5F5F7; color: #2C2C35; line-height: 1.15; }
+.size-chip b { font-size: 0.8rem; font-weight: 800; white-space: nowrap; }
+.size-chip small { font-size: 0.72rem; font-weight: 700; color: #166534; }
+.size-chip.low small { color: #C2410C; }
+.size-chip.active { background: #2C2C35; color: white; }
+.size-chip.active small { color: #B7F5C9; }
+.size-chip.active.low small { color: #FFC59E; }
+
+/* Телефони: безпечні зони (виріз, нижня смужка iPhone) */
+.header { padding-top: calc(15px + env(safe-area-inset-top, 0px)); }
+.action-bar { bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
+body { padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
+
+/* Дуже вузькі екрани (до 360px) */
+.share-btn { white-space: nowrap; }
+@media (max-width: 400px) { .hide-narrow { display: none; } }
+@media (max-width: 360px) {
+    .screen { padding: 14px; }
+    .products-grid { gap: 10px; }
+    .product-info { padding: 10px; }
+    .size-chip { min-width: 46px; padding: 4px 5px; }
+    .p-price { font-size: 1.1rem; }
+    .share-btn { padding: 12px 14px; font-size: 0.95rem; }
+}
+
+/* Комп'ютер: ширший каталог, 3–4 картки в рядку */
+@media (min-width: 900px) {
+    #seller-screen { max-width: 980px; }
+    .products-grid { grid-template-columns: repeat(3, 1fr); gap: 18px; }
+}
+@media (min-width: 1200px) {
+    .products-grid { grid-template-columns: repeat(4, 1fr); }
+}
+@media (hover: hover) {
+    .select-btn:hover { filter: brightness(0.96); }
+    .big-btn:hover { border-color: #E0D3D8; }
+}
+
+.catalog-header { scroll-margin-top: 90px; }
