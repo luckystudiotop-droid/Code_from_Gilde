@@ -337,6 +337,7 @@ function normColor(value) {
     if (/[а-яіїєґ]/.test(s)) s = s.replace(/[aceiopxyk]/g, ch => LATIN_LOOKALIKES[ch]);
     s = s.replace(/мята/g, "м'ята").replace(/прінт/g, 'принт');
     s = s.replace(/[^a-zа-яіїєґё0-9'\s-]/g, ' ');
+    s = s.replace(/-/g, ' '); // "світло сірий" = "світло-сірий"
     return s.replace(/\s+/g, ' ').trim();
 }
 
