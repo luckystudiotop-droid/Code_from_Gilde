@@ -128,7 +128,15 @@
         </div>
 
         <div class="admin-panel" style="margin-top: 20px;">
-            <h2 style="margin-top: 0;">3. Зайві файли у сховищі</h2>
+            <h2 style="margin-top: 0;">3. Товари без фото</h2>
+            <p class="admin-hint">Товари в наявності, для яких немає фото саме цієї моделі й кольору. Назвіть файл точно як у списку і завантажте в блоці 2.</p>
+            <button class="btn-upload btn-secondary" onclick="refreshMissingPhotos()">🔄 Оновити список</button>
+            <div id="missing-status" class="admin-status"></div>
+            <div id="missing-report" class="report"></div>
+        </div>
+
+        <div class="admin-panel" style="margin-top: 20px;">
+            <h2 style="margin-top: 0;">4. Зайві файли у сховищі</h2>
             <p class="admin-hint">Файли, які не показуються в жодній картці товару. Їх можна безпечно видалити.</p>
             <button id="orphan-find-btn" class="btn-upload btn-secondary" onclick="findOrphans()">🔍 Знайти зайві файли</button>
             <div id="orphan-status" class="admin-status"></div>

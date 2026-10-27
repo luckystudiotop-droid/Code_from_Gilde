@@ -35,9 +35,30 @@ async function fetchAllProducts(columns) {
     return rows;
 }
 
+// Фото: одна таблиця "модель + колір -> файл", незалежна від імпорту залишків
+function photoKey(baseModel, colorKey) {
+    return `${String(baseModel || '').trim()}|${colorKey}`;
+}
+
+async function fetchPhotoMap() {
+    const { data, error } = await db.from('photos').select('base_model, color_key, path, updated_at').range(0, 9999);
+    if (error) throw error;
+    return new Map(data.map(ph => [photoKey(ph.base_model, ph.color_key), ph]));
+}
+
+function photoPublicUrl(ph) {
+    const { data } = db.storage.from(PHOTO_BUCKET).getPublicUrl(ph.path);
+    return `${data.publicUrl}?v=${new Date(ph.updated_at).getTime()}`; // нова версія = без старого кешу
+}
+
 async function loadProducts() {
     try {
-        allProducts = await fetchAllProducts('*');
+        const [products, photoMap] = await Promise.all([fetchAllProducts('*'), fetchPhotoMap()]);
+        products.forEach(p => {
+            const ph = photoMap.get(photoKey(p.base_model, normColor(p.color)));
+            p.photo_url = ph ? photoPublicUrl(ph) : null; // тільки точний збіг моделі й кольору
+        });
+        allProducts = products;
         renderProducts();
     } catch (e) {
         console.error('Помилка завантаження товарів', e);
@@ -234,6 +255,7 @@ function openAdmin(session) {
     document.getElementById('admin-user').innerText = `👤 ${session.user.email}`;
     showScreen('admin-screen');
     refreshStorageUsage();
+    refreshMissingPhotos();
 }
 
 async function doLogin(event) {
@@ -572,20 +594,6 @@ function parsePhotoName(fileName) {
     return { baseModel, color };
 }
 
-// Поки що логіка збігу як раніше (includes в обидва боки); точне порівняння — етап 3
-function colorsMatch(fileColor, dbColorNorm) {
-    if (!dbColorNorm) return false; // раніше порожній колір у базі збігався з будь-яким фото
-    return dbColorNorm.includes(fileColor) || fileColor.includes(dbColorNorm);
-}
-
-function pathFromUrl(url) {
-    if (!url) return null;
-    const marker = `/object/public/${PHOTO_BUCKET}/`;
-    const i = url.indexOf(marker);
-    if (i < 0) return null;
-    return decodeURIComponent(url.slice(i + marker.length).split('?')[0]);
-}
-
 async function decodeImage(file) {
     if ('createImageBitmap' in window) {
         try { return await createImageBitmap(file, { imageOrientation: 'from-image' }); } catch (e) { /* пробуємо через <img> */ }
@@ -663,7 +671,7 @@ async function refreshStorageUsage() {
         let text = `📦 Сховище фото: ${totalMb.toFixed(1)} МБ з ${STORAGE_LIMIT_MB} МБ (${Math.round(ratio * 100)}%) • файлів: ${files.length}`;
         if (ratio >= STORAGE_WARN_RATIO) {
             el.classList.add('warn');
-            text += `\n⚠️ Зайнято понад ${Math.round(STORAGE_WARN_RATIO * 100)}% ліміту. Видаліть зайві файли (блок 3).`;
+            text += `\n⚠️ Зайнято понад ${Math.round(STORAGE_WARN_RATIO * 100)}% ліміту. Видаліть зайві файли (блок 4).`;
         }
         el.innerText = text;
     } catch (e) {
@@ -684,6 +692,12 @@ function renderReport(container, sections) {
         .join('');
 }
 
+async function fetchPhotoPaths() {
+    const { data, error } = await db.from('photos').select('path').range(0, 9999);
+    if (error) throw error;
+    return new Set(data.map(r => r.path));
+}
+
 async function uploadPhotosToSupabase() {
     const fileInput = document.getElementById('photo-files');
     const statusDiv = document.getElementById('photo-status');
@@ -698,48 +712,27 @@ async function uploadPhotosToSupabase() {
     statusDiv.style.color = '#00C2FF';
     statusDiv.innerText = '⏳ Отримання списку товарів...';
 
-    const report = { uploaded: [], fuzzy: [], skipped: [], noMatch: [], duplicates: [], unused: [], failed: [] };
+    const report = { uploaded: [], skipped: [], noMatch: [], duplicates: [], failed: [] };
 
     try {
-        const products = await fetchAllProducts('id, base_model, color, photo_url');
-        const productById = new Map(products.map(p => [p.id, p]));
+        const [products, photoMap] = await Promise.all([fetchAllProducts('base_model, color'), fetchPhotoMap()]);
+        const productKeys = new Set(products.map(p => photoKey(p.base_model, normColor(p.color))));
 
-        // 1. План: розбираємо назви, один файл на модель + колір
-        const byPath = new Map();
+        // 1. План: тільки ТОЧНИЙ збіг "модель + колір"; один файл на ключ
+        const byKey = new Map();
         for (const file of files) {
             const parsed = parsePhotoName(file.name);
             if (parsed.error) { report.skipped.push(`${file.name} — ${parsed.error}`); continue; }
-            const path = `${slugify(parsed.baseModel)}__${slugify(parsed.color)}.jpg`;
-            if (byPath.has(path)) report.duplicates.push(`${byPath.get(path).file.name} замінено на ${file.name}`);
-            byPath.set(path, { file, ...parsed, path, productIds: [], fuzzyColors: new Set(), matchedAny: false });
+            const key = photoKey(parsed.baseModel, parsed.color);
+            if (!productKeys.has(key)) { report.noMatch.push(file.name); continue; }
+            if (byKey.has(key)) report.duplicates.push(`${byKey.get(key).file.name} замінено на ${file.name}`);
+            byKey.set(key, { file, ...parsed, key, path: `${slugify(parsed.baseModel)}__${slugify(parsed.color)}.jpg` });
         }
-        const candidates = [...byPath.values()];
+        const toUpload = [...byKey.values()];
 
-        // 2. Кожному товару — один файл: точний збіг кольору, інакше найдовша (найточніша) назва
-        for (const p of products) {
-            const dbColor = normColor(p.color);
-            const matches = candidates.filter(c => c.baseModel === String(p.base_model).trim() && colorsMatch(c.color, dbColor));
-            if (!matches.length) continue;
-            matches.forEach(c => { c.matchedAny = true; });
-            const best = matches.find(c => c.color === dbColor)
-                || matches.reduce((a, b) => (b.color.length > a.color.length ? b : a));
-            best.productIds.push(p.id);
-            if (best.color !== dbColor) best.fuzzyColors.add(String(p.color).trim());
-        }
-
-        candidates.forEach(c => {
-            if (!c.matchedAny) report.noMatch.push(c.file.name);
-            else if (!c.productIds.length) report.unused.push(`${c.file.name} — для цих товарів є точніший файл`);
-            c.fuzzyColors.forEach(col => report.fuzzy.push(`${c.file.name} → колір у базі «${col}»`));
-        });
-
-        // 3. Стискаємо, завантажуємо під постійним іменем, прив'язуємо
-        const toUpload = candidates.filter(c => c.productIds.length);
+        // 2. Стискаємо, завантажуємо, записуємо в таблицю photos
         const oldPaths = new Set();
-        const newPaths = new Set();
-        let linkedProducts = 0;
         let uploadedBytes = 0;
-
         for (let i = 0; i < toUpload.length; i++) {
             const c = toUpload[i];
             statusDiv.innerText = `⏳ ${i + 1} з ${toUpload.length}: ${c.file.name}`;
@@ -749,38 +742,30 @@ async function uploadPhotosToSupabase() {
                     .upload(c.path, blob, { contentType: 'image/jpeg', cacheControl: '31536000', upsert: true });
                 if (upErr) throw upErr;
 
-                const { data: urlData } = db.storage.from(PHOTO_BUCKET).getPublicUrl(c.path);
-                const url = `${urlData.publicUrl}?v=${Date.now()}`; // нова версія = браузер не покаже старе фото з кешу
+                const { error: dbErr } = await db.from('photos').upsert(
+                    { base_model: c.baseModel, color_key: c.color, path: c.path, updated_at: new Date().toISOString() },
+                    { onConflict: 'base_model,color_key' });
+                if (dbErr) throw dbErr;
 
-                const { error: updErr } = await db.from('products').update({ photo_url: url }).in('id', c.productIds);
-                if (updErr) throw updErr;
-
-                newPaths.add(c.path);
-                c.productIds.forEach(id => {
-                    const old = pathFromUrl(productById.get(id).photo_url);
-                    if (old) oldPaths.add(old);
-                });
-                linkedProducts += c.productIds.length;
+                const prev = photoMap.get(c.key);
+                if (prev && prev.path !== c.path) oldPaths.add(prev.path);
                 uploadedBytes += blob.size;
-                report.uploaded.push(`${c.file.name} → ${c.path} (${formatSize(blob.size)}, товарів: ${c.productIds.length})`);
+                report.uploaded.push(`${c.file.name} → ${c.path} (${formatSize(blob.size)})`);
             } catch (e) {
                 console.error('Помилка для', c.file.name, e);
                 report.failed.push(`${c.file.name} — ${e.message || e}`);
             }
         }
 
-        // 4. Видаляємо старі файли, на які більше ніхто не посилається
-        newPaths.forEach(p => oldPaths.delete(p));
+        // 3. Старі файли цих ключів, на які більше ніщо не посилається
         let removed = 0;
         if (oldPaths.size) {
-            statusDiv.innerText = '🧹 Видаляємо старі версії фото...';
-            const fresh = await fetchAllProducts('photo_url');
-            const referenced = new Set(fresh.map(r => pathFromUrl(r.photo_url)).filter(Boolean));
+            const referenced = await fetchPhotoPaths();
             removed = await removeStorageFiles([...oldPaths].filter(p => !referenced.has(p)));
         }
 
         statusDiv.style.color = '#34C759';
-        statusDiv.innerText = `🎉 Готово! Завантажено фото: ${report.uploaded.length} (${formatSize(uploadedBytes)}), прив'язано товарів: ${linkedProducts}, видалено старих файлів: ${removed}.`;
+        statusDiv.innerText = `🎉 Готово! Завантажено фото: ${report.uploaded.length} (${formatSize(uploadedBytes)}), видалено старих файлів: ${removed}.`;
     } catch (e) {
         console.error(e);
         statusDiv.style.color = '#FF3B30';
@@ -789,25 +774,54 @@ async function uploadPhotosToSupabase() {
         renderReport(reportDiv, [
             { title: '❌ Помилки завантаження', items: report.failed, cls: 'bad', open: true },
             { title: '⏭ Пропущено (назва файлу)', items: report.skipped, cls: 'warn', open: true },
-            { title: '❓ Не знайдено товару', items: report.noMatch, cls: 'warn', open: true },
-            { title: '👀 Неточний збіг кольору (перевірте)', items: report.fuzzy, cls: 'warn', open: true },
+            { title: '❓ Немає товару з такою моделлю й кольором', items: report.noMatch, cls: 'warn', open: true },
             { title: '🔁 Дублі в пачці (взято останній)', items: report.duplicates, cls: 'warn' },
-            { title: '💤 Не використано', items: report.unused },
             { title: '✅ Завантажено', items: report.uploaded }
         ]);
         btn.disabled = false;
         refreshStorageUsage();
-        loadProducts();
+        refreshMissingPhotos();
     }
+}
+
+// --- Товари в наявності без фото ---
+async function refreshMissingPhotos() {
+    const statusDiv = document.getElementById('missing-status');
+    const reportDiv = document.getElementById('missing-report');
+    statusDiv.style.color = '#2C2C35';
+    statusDiv.innerText = '⏳ Рахуємо...';
+    reportDiv.innerHTML = '';
+
+    await loadProducts();
+    const groups = new Map();
+    allProducts.filter(p => (p.stock || 0) > 0 && !p.photo_url).forEach(p => {
+        const key = photoKey(p.base_model, normColor(p.color));
+        if (!groups.has(key)) groups.set(key, { base: p.base_model, color: p.color, stock: 0, sizes: new Set() });
+        const g = groups.get(key);
+        g.stock += p.stock;
+        if (p.size_index !== null) g.sizes.add(p.size_index);
+    });
+
+    const list = [...groups.values()]
+        .sort((a, b) => b.stock - a.stock)
+        .map(g => `${g.base}(${g.color || 'без кольору'}) — ${g.stock} шт, розміри ${[...g.sizes].sort((x, y) => x - y).join(', ')}`);
+
+    if (!list.length) {
+        statusDiv.style.color = '#34C759';
+        statusDiv.innerText = '✅ У всіх товарів у наявності є фото.';
+        return;
+    }
+    statusDiv.innerText = `Моделей і кольорів без фото: ${list.length}. Назва файлу для кожного вже готова — як у списку.`;
+    renderReport(reportDiv, [{ title: '📷 Без фото (спочатку ті, яких найбільше)', items: list, cls: 'warn', open: true }]);
 }
 
 // --- Зайві файли (ні на що не посилаються) ---
 let orphanPaths = [];
 
 async function findReferencedPaths() {
-    const rows = await fetchAllProducts('photo_url');
-    if (!rows.length) throw new Error('список товарів порожній, перевірку зупинено');
-    return new Set(rows.map(r => pathFromUrl(r.photo_url)).filter(Boolean));
+    const paths = await fetchPhotoPaths();
+    if (!paths.size) throw new Error('таблиця фото порожня — спочатку завантажте фото, перевірку зупинено');
+    return paths;
 }
 
 async function findOrphans() {
