@@ -55,15 +55,15 @@
         <div class="filter-section">
             <h3>3. Розмір</h3>
             <div class="grid-tags">
-                <button class="big-btn size filter-size" data-val="0" onclick="toggleFilter('size', '0')">0 (86-92 см)</button>
-                <button class="big-btn size filter-size" data-val="1" onclick="toggleFilter('size', '1')">1 (98-104 см)</button>
-                <button class="big-btn size filter-size" data-val="2" onclick="toggleFilter('size', '2')">2 (110-116 см)</button>
-                <button class="big-btn size filter-size" data-val="3" onclick="toggleFilter('size', '3')">3 (122-128 см)</button>
-                <button class="big-btn size filter-size" data-val="4" onclick="toggleFilter('size', '4')">4 (134-140 см)</button>
-                <button class="big-btn size filter-size" data-val="5" onclick="toggleFilter('size', '5')">5 (146-152 см)</button>
-                <button class="big-btn size filter-size" data-val="6" onclick="toggleFilter('size', '6')">6 (158-164 см)</button>
-                <button class="big-btn size filter-size" data-val="7" onclick="toggleFilter('size', '7')">7 (170-176 см)</button>
-                <button class="big-btn size filter-size" data-val="8" onclick="toggleFilter('size', '8')">8 (176-182 см)</button>
+                <button class="big-btn size filter-size" data-val="0" onclick="toggleFilter('size', '0')">0 (0-1 р.)</button>
+                <button class="big-btn size filter-size" data-val="1" onclick="toggleFilter('size', '1')">1 (1-2 р.)</button>
+                <button class="big-btn size filter-size" data-val="2" onclick="toggleFilter('size', '2')">2 (3-4 р.)</button>
+                <button class="big-btn size filter-size" data-val="3" onclick="toggleFilter('size', '3')">3 (5-6 р.)</button>
+                <button class="big-btn size filter-size" data-val="4" onclick="toggleFilter('size', '4')">4 (7-8 р.)</button>
+                <button class="big-btn size filter-size" data-val="5" onclick="toggleFilter('size', '5')">5 (9-10 р.)</button>
+                <button class="big-btn size filter-size" data-val="6" onclick="toggleFilter('size', '6')">6 (11-12 р.)</button>
+                <button class="big-btn size filter-size" data-val="7" onclick="toggleFilter('size', '7')">7 (13-14 р.)</button>
+                <button class="big-btn size filter-size" data-val="8" onclick="toggleFilter('size', '8')">8 (15-16 р.)</button>
             </div>
         </div>
 
@@ -109,9 +109,12 @@
         </div>
         <div class="admin-panel">
             <h2 style="margin-top: 0;">1. Оновлення бази</h2>
-            <input type="file" id="excel-file" accept=".xlsx, .xls" style="margin-bottom: 15px; font-family: Nunito;">
-            <button class="btn-upload" onclick="processExcel()">🚀 ОНОВИТИ БАЗУ (ТОРГСОФТ)</button>
-            <div id="upload-status" style="margin-top: 15px; font-weight: 700; color: #34C759;"></div>
+            <p class="admin-hint">Файл залишків від фрилансера (ТоргСофт). Спочатку перевірка — в базу нічого не пишеться, поки не натиснете «Застосувати».</p>
+            <input type="file" id="excel-file" accept=".xlsx, .xls" onchange="resetImportPreview()" style="margin-bottom: 15px; font-family: Nunito;">
+            <button id="import-check-btn" class="btn-upload" onclick="previewImport()">🔍 ПЕРЕВІРИТИ ФАЙЛ</button>
+            <div id="upload-status" class="admin-status"></div>
+            <div id="import-report" class="report"></div>
+            <button id="import-apply-btn" class="btn-upload btn-apply" style="display: none;" onclick="applyImport()">✅ ЗАСТОСУВАТИ</button>
         </div>
 
         <div class="admin-panel" style="margin-top: 20px;">

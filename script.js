@@ -271,97 +271,250 @@ db.auth.onAuthStateChange(event => {
     }
 });
 
-// Функції адмінки
-// Функції адмінки
-async function processExcel() {
-    const fileInput = document.getElementById('excel-file');
-    const statusDiv = document.getElementById('upload-status');
-    
-    if (!fileInput.files.length) { alert("Оберіть файл БілизнаЦіни.xlsx!"); return; }
+// =====================================================================
+// ІМПОРТ ЕКСПОРТУ ТОРГСОФТУ: перевірка -> застосування однією транзакцією
+// =====================================================================
 
-    statusDiv.innerText = "⏳ Обробка файлу... не закривайте сторінку.";
-    statusDiv.style.color = "#FF2A85";
-    
-    const file = fileInput.files[0];
-    const reader = new FileReader();
-    
-    reader.onload = async function(e) {
-        const data = new Uint8Array(e.target.result);
-        const workbook = XLSX.read(data, {type: 'array'});
-        const firstSheetName = workbook.SheetNames[0];
-        
-        // Читаємо з 3-го рядка
-        const rows = XLSX.utils.sheet_to_json(workbook.Sheets[firstSheetName], { range: 2 });
-        let toUpsert = [];
-        let seenSkus = new Set(); // Трекер унікальності артикулів
+const EXCLUDED_CATEGORIES = ['Піжама'];   // ці товари не імпортуються взагалі
+const IMPORT_MIN_RATIO = 0.8;             // файл має містити ≥80% товарів, що зараз у наявності
+const SIZE_LABELS = {
+    0: '0 (0-1 рік)', 1: '1 (1-2 роки)', 2: '2 (3-4 роки)', 3: '3 (5-6 років)', 4: '4 (7-8 років)',
+    5: '5 (9-10 років)', 6: '6 (11-12 років)', 7: '7 (13-14 років)', 8: '8 (15-16 років)'
+};
 
-        rows.forEach(row => {
-            if (!row['Назва товару'] || !row['Артикул']) return;
+let pendingImport = null; // { rows, canApply }
 
-            let original_sku = String(row['Артикул']).trim();
-            let base_model = original_sku.split('_')[0];
-            let name = row['Назва товару'];
-            
-            let gender = 'Невідомо';
-            if (name.toLowerCase().includes('хлоп')) gender = 'Хлопчик';
-            if (name.toLowerCase().includes('дів')) gender = 'Дівчинка';
+function cleanText(v) {
+    if (v === undefined || v === null) return '';
+    return String(v).replace(/\u00A0/g, ' ').replace(/\s+/g, ' ').trim();
+}
 
-            let cat = row['Вид товару'] ? String(row['Вид товару']).trim() : 'Інше';
-            if (cat.startsWith('Комплект')) cat = 'Комплекти';
-            if (name.toLowerCase().includes('піжама')) cat = 'Комплекти'; // Додатково страхуємо піжами
+// Чистка кольору з експорту (порожній -> null, "мята" -> "М'ята")
+function cleanColor(v) {
+    let s = cleanText(v).replace(/[ʼ’‘`´]/g, "'");
+    if (!s || s.toLowerCase() === 'undefined') return null;
+    s = s.replace(/м'?ята/gi, m => (m[0] === 'М' ? "М'ята" : "м'ята"));
+    return s;
+}
 
-            let size_name = row['Розмір'] || 'Не вказано';
-            let size_index = null;
-            let sizeStr = String(size_name).trim();
-            if (sizeStr[0] && !isNaN(sizeStr[0])) {
-                size_index = parseInt(sizeStr[0]);
-            } else {
-                let parts = original_sku.split('_');
-                if (parts.length > 1 && !isNaN(parts[1])) size_index = parseInt(parts[1]);
-            }
+function readExcelRows(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = e => {
+            try {
+                const workbook = XLSX.read(new Uint8Array(e.target.result), { type: 'array' });
+                const sheet = workbook.Sheets[workbook.SheetNames[0]];
+                resolve(XLSX.utils.sheet_to_json(sheet, { range: 2 })); // заголовки в 3-му рядку
+            } catch (err) { reject(err); }
+        };
+        reader.onerror = () => reject(new Error('не вдалося прочитати файл'));
+        reader.readAsArrayBuffer(file);
+    });
+}
 
-            // ЗАХИСТ ВІД ПОМИЛОК ТОРГСОФТУ (однакові артикули):
-            let sku = original_sku;
-            if (seenSkus.has(sku)) {
-                let sizeSuffix = size_index !== null ? size_index : sizeStr.replace(/\s+/g, '');
-                sku = `${sku}_${sizeSuffix}`;
-                if (seenSkus.has(sku)) sku = `${sku}_${Math.floor(Math.random() * 1000)}`;
-            }
-            seenSkus.add(sku);
+// Рядки експорту -> записи для бази + список зауважень
+function parseExportRows(rawRows) {
+    const rows = [];
+    const notes = { excluded: [], fixedSize: [], badSku: [], noColor: [], unknownGender: [], badPrice: [], invalid: [], dupKeys: [] };
+    const seenKeys = new Map();
 
-            toUpsert.push({
-                base_model: base_model,
-                sku: sku, // Тепер гарантовано унікальний
-                name: name,
-                gender: gender,
-                category: cat,
-                size_name: String(size_name),
-                size_index: size_index,
-                color: String(row['Колір']).replace('мята', "М'ята").replace('мʼята', "М'ята").trim(),
-                price: parseFloat(row['Ціна роздрібна']) || 0,
-                stock: parseInt(row['Кількість']) || 0
-            });
-        });
+    rawRows.forEach((r, i) => {
+        const excelRow = i + 4; // номер рядка в Excel
+        const name = cleanText(r['Назва товару']);
+        const sku = cleanText(r['Артикул']);
+        if (!name || !sku) return; // підсумкові рядки ("Виконавець" тощо)
 
-        statusDiv.innerText = `✅ Знайдено ${toUpsert.length} позицій. Завантажуємо...`;
-
-        for (let i = 0; i < toUpsert.length; i += 100) {
-            const chunk = toUpsert.slice(i, i + 100);
-            const { error } = await db.from('products').upsert(chunk, { onConflict: 'sku' });
-            if (error) {
-                console.error(error);
-                statusDiv.innerText = `❌ Помилка на ${i}-му рядку!`;
-                statusDiv.style.color = "red";
-                return;
-            }
+        const kind = cleanText(r['Вид товару']);
+        if (EXCLUDED_CATEGORIES.includes(kind) || /піжам/i.test(name)) {
+            notes.excluded.push(`${sku} — ${name}`);
+            return;
         }
 
-        statusDiv.innerText = `🎉 База успішно оновлена! Завантажено: ${toUpsert.length} шт.`;
-        statusDiv.style.color = "#34C759";
-        loadProducts();
-    };
-    reader.readAsArrayBuffer(file);
+        const rawSize = cleanText(r['Розмір']);
+        const sizeMatch = rawSize.match(/^(\d+)/);
+        if (!sizeMatch) { notes.invalid.push(`Рядок ${excelRow}: ${sku} — немає числа розміру («${rawSize}»)`); return; }
+        const sizeIndex = parseInt(sizeMatch[1], 10);
+
+        let sizeName = rawSize;
+        if (SIZE_LABELS[sizeIndex] !== undefined) {
+            sizeName = SIZE_LABELS[sizeIndex];
+            if (rawSize !== sizeName) notes.fixedSize.push(`${sku}: «${rawSize}» → «${sizeName}»`);
+        }
+
+        if (/^[^_]+_\s*_/.test(sku)) notes.badSku.push(`${sku} (розмір ${sizeName})`);
+
+        const lower = name.toLowerCase();
+        let gender = 'Невідомо';
+        if (lower.includes('хлоп')) gender = 'Хлопчик';
+        if (lower.includes('дів')) gender = 'Дівчинка';
+        if (gender === 'Невідомо') notes.unknownGender.push(`${sku} — ${name}`);
+
+        let category = kind || 'Інше';
+        if (category.startsWith('Комплект')) category = 'Комплекти';
+
+        const color = cleanColor(r['Колір']);
+        if (!color) notes.noColor.push(`${sku} — ${name}`);
+
+        const price = parseFloat(String(r['Ціна роздрібна']).replace(',', '.'));
+        const stock = parseInt(r['Кількість'], 10);
+        if (!(price > 0)) notes.badPrice.push(`${sku} — ціна «${r['Ціна роздрібна']}»`);
+
+        const importKey = `${sku}|${sizeIndex}`;
+        if (seenKeys.has(importKey)) {
+            notes.dupKeys.push(`${importKey}: рядки ${seenKeys.get(importKey)} і ${excelRow}`);
+            return;
+        }
+        seenKeys.set(importKey, excelRow);
+
+        rows.push({
+            import_key: importKey,
+            base_model: sku.split('_')[0].trim(),
+            sku,
+            name,
+            gender,
+            category,
+            size_name: sizeName,
+            size_index: sizeIndex,
+            color,
+            price: price > 0 ? price : 0,
+            stock: Number.isFinite(stock) ? stock : 0
+        });
+    });
+    return { rows, notes };
 }
+
+function describeProduct(p) {
+    return `${p.base_model} ${p.color || 'без кольору'}, розмір ${p.size_index}`;
+}
+
+async function previewImport() {
+    const fileInput = document.getElementById('excel-file');
+    const statusDiv = document.getElementById('upload-status');
+    const reportDiv = document.getElementById('import-report');
+    const applyBtn = document.getElementById('import-apply-btn');
+    const checkBtn = document.getElementById('import-check-btn');
+
+    pendingImport = null;
+    applyBtn.style.display = 'none';
+    reportDiv.innerHTML = '';
+    if (!fileInput.files.length) { alert('Оберіть файл експорту з ТоргСофту!'); return; }
+
+    checkBtn.disabled = true;
+    statusDiv.style.color = '#2C2C35';
+    statusDiv.innerText = '⏳ Читаємо файл і порівнюємо з базою...';
+
+    try {
+        const [rawRows, dbRows] = await Promise.all([
+            readExcelRows(fileInput.files[0]),
+            fetchAllProducts('import_key, base_model, sku, name, gender, category, size_name, size_index, color, price, stock')
+        ]);
+        const { rows, notes } = parseExportRows(rawRows);
+        if (!rows.length) throw new Error('у файлі не знайдено жодного товару. Це точно експорт залишків?');
+
+        const dbByKey = new Map(dbRows.map(p => [p.import_key, p]));
+        const fileKeys = new Set(rows.map(r => r.import_key));
+        const added = [], changed = [], otherChanged = [];
+        let unchanged = 0;
+
+        rows.forEach(r => {
+            const old = dbByKey.get(r.import_key);
+            if (!old) { added.push(`${describeProduct(r)} — ${r.price} грн, ${r.stock} шт`); return; }
+            const diffs = [];
+            if (Number(old.price) !== r.price) diffs.push(`ціна ${old.price} → ${r.price}`);
+            if ((old.stock || 0) !== r.stock) diffs.push(`залишок ${old.stock || 0} → ${r.stock}`);
+            if (diffs.length) { changed.push(`${describeProduct(r)}: ${diffs.join(', ')}`); return; }
+            const fields = ['base_model', 'sku', 'name', 'gender', 'category', 'size_name', 'size_index', 'color'];
+            if (fields.some(f => (old[f] ?? null) !== (r[f] ?? null))) otherChanged.push(describeProduct(r));
+            else unchanged++;
+        });
+
+        const zeroed = dbRows
+            .filter(p => (p.stock || 0) > 0 && !fileKeys.has(p.import_key))
+            .map(p => `${describeProduct(p)} — було ${p.stock} шт`);
+
+        const inStock = dbRows.filter(p => (p.stock || 0) > 0).length;
+        const tooSmall = inStock > 0 && rows.length < inStock * IMPORT_MIN_RATIO;
+        const hasDup = notes.dupKeys.length > 0;
+
+        let summary = `📄 У файлі товарів: ${rows.length} (у базі зараз в наявності: ${inStock})\n` +
+            `🆕 Нових: ${added.length}\n✏️ Змінились ціна/залишок: ${changed.length}\n` +
+            `🔧 Інші уточнення (назва, розмір, колір): ${otherChanged.length}\n` +
+            `0️⃣ Немає у файлі, обнуляться: ${zeroed.length}\n✔️ Без змін: ${unchanged}`;
+
+        if (tooSmall) {
+            summary += `\n\n⛔ У файлі менше ${Math.round(IMPORT_MIN_RATIO * 100)}% товарів, що зараз у наявності. Схоже, файл неповний — застосування заблоковано.`;
+        } else if (hasDup) {
+            summary += `\n\n⛔ У файлі є однакові артикули з однаковим розміром — застосування заблоковано, див. список нижче.`;
+        }
+        statusDiv.style.color = (tooSmall || hasDup) ? '#FF3B30' : '#2C2C35';
+        statusDiv.innerText = summary;
+
+        renderReport(reportDiv, [
+            { title: '⛔ Однакові ключі у файлі', items: notes.dupKeys, cls: 'bad', open: true },
+            { title: '⛔ Рядки без розміру (пропущено)', items: notes.invalid, cls: 'bad', open: true },
+            { title: '0️⃣ Обнуляться (немає у файлі)', items: zeroed, cls: 'warn' },
+            { title: '🆕 Нові', items: added },
+            { title: '✏️ Змінились ціна/залишок', items: changed },
+            { title: '🔧 Інші уточнення', items: otherChanged },
+            { title: '⚠️ Артикул без індексу розміру', items: notes.badSku, cls: 'warn' },
+            { title: '⚠️ Без кольору', items: notes.noColor, cls: 'warn' },
+            { title: '⚠️ Не визначено стать', items: notes.unknownGender, cls: 'warn' },
+            { title: '⚠️ Ціна 0 або не число', items: notes.badPrice, cls: 'warn' },
+            { title: '✍️ Виправлено підпис розміру', items: notes.fixedSize },
+            { title: '🚫 Пропущено (піжами)', items: notes.excluded }
+        ]);
+
+        if (!tooSmall && !hasDup) {
+            pendingImport = { rows };
+            applyBtn.style.display = 'block';
+        }
+    } catch (e) {
+        console.error(e);
+        statusDiv.style.color = '#FF3B30';
+        statusDiv.innerText = `❌ Помилка: ${e.message || e}`;
+    } finally {
+        checkBtn.disabled = false;
+    }
+}
+
+async function applyImport() {
+    if (!pendingImport) return;
+    const statusDiv = document.getElementById('upload-status');
+    const applyBtn = document.getElementById('import-apply-btn');
+    const checkBtn = document.getElementById('import-check-btn');
+
+    applyBtn.disabled = true;
+    checkBtn.disabled = true;
+    statusDiv.style.color = '#2C2C35';
+    statusDiv.innerText = '⏳ Записуємо в базу однією операцією...';
+
+    try {
+        const { data, error } = await db.rpc('import_products', { p_rows: pendingImport.rows });
+        if (error) throw error;
+        statusDiv.style.color = '#34C759';
+        statusDiv.innerText = `🎉 Базу оновлено! У файлі: ${data.in_file}, нових: ${data.inserted}, ` +
+            `оновлено: ${data.updated}, обнулено: ${data.zeroed}.`;
+        document.getElementById('import-report').innerHTML = '';
+        applyBtn.style.display = 'none';
+        pendingImport = null;
+        loadProducts();
+    } catch (e) {
+        console.error(e);
+        statusDiv.style.color = '#FF3B30';
+        statusDiv.innerText = `❌ База не змінилась. Помилка: ${e.message || e}`;
+    } finally {
+        applyBtn.disabled = false;
+        checkBtn.disabled = false;
+    }
+}
+
+function resetImportPreview() {
+    pendingImport = null;
+    document.getElementById('import-apply-btn').style.display = 'none';
+    document.getElementById('import-report').innerHTML = '';
+    document.getElementById('upload-status').innerText = '';
+}
+
 // =====================================================================
 // ФОТО: стиснення, постійні імена файлів, звіт, розмір сховища, зайві файли
 // =====================================================================

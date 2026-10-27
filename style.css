@@ -98,3 +98,6 @@ h1, h2, h3 { font-family: 'Unbounded', sans-serif; }
 .text-input:focus { outline: 2px solid #FF2A85; border-color: transparent; }
 .admin-userbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 20px; font-weight: 700; color: #888; word-break: break-all; }
 .logout-btn { background: #FFF0F0; color: #FF3B30; border: none; padding: 10px 16px; border-radius: 16px; font-weight: 800; cursor: pointer; flex-shrink: 0; }
+
+/* Імпорт */
+.btn-apply { background: #34C759; margin-top: 15px; }
