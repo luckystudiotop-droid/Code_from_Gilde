@@ -78,3 +78,17 @@ h1, h2, h3 { font-family: 'Unbounded', sans-serif; }
 .empty-state { grid-column: 1 / -1; text-align: center; color: #888; padding: 40px 20px; font-weight: 700; background: white; border-radius: 24px; }
 .admin-panel { background: white; padding: 25px; border-radius: 24px; box-shadow: 0 8px 24px rgba(0,0,0,0.04); }
 .btn-upload { background: #2C2C35; color: white; border: none; padding: 16px; border-radius: 20px; width: 100%; font-weight: 800; cursor: pointer; }
+/* Адмінка: сховище, звіти, кнопки */
+.admin-hint { color: #888; font-size: 0.9rem; margin: 0 0 15px; font-weight: 600; }
+.storage-usage { background: #F0FDF4; color: #166534; padding: 12px 16px; border-radius: 16px; font-weight: 800; margin-bottom: 15px; white-space: pre-line; font-size: 0.95rem; }
+.storage-usage.warn { background: #FFF0F0; color: #FF3B30; }
+.admin-status { margin-top: 15px; font-weight: 700; white-space: pre-line; }
+.report { margin-top: 15px; display: flex; flex-direction: column; gap: 8px; }
+.report-block { background: #F5F5F7; border-radius: 16px; padding: 10px 14px; }
+.report-block.warn { background: #FFF7ED; }
+.report-block.bad { background: #FFF0F0; }
+.report-block summary { font-weight: 800; cursor: pointer; }
+.report-block ul { margin: 8px 0 0; padding-left: 18px; font-size: 0.85rem; color: #555; max-height: 260px; overflow-y: auto; word-break: break-word; }
+.btn-upload:disabled { opacity: 0.6; cursor: wait; }
+.btn-secondary { background: #F0F0F5; color: #2C2C35; }
+.btn-danger { background: #FF3B30; margin-top: 15px; }

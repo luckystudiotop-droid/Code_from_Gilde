@@ -98,9 +98,21 @@
 
         <div class="admin-panel" style="margin-top: 20px;">
             <h2 style="margin-top: 0;">2. Завантаження фото</h2>
-            <input type="file" id="photo-files" multiple accept="image/*" style="margin-bottom: 15px; font-family: Nunito;">
-            <button class="btn-upload" style="background: #00C2FF;" onclick="uploadPhotosToSupabase()">☁️ ЗАВАНТАЖИТИ ФОТО НА СЕРВЕР</button>
-            <div id="photo-status" style="margin-top: 15px; font-weight: 700; color: #00C2FF;"></div>
+            <div id="storage-usage" class="storage-usage">⏳ Рахуємо розмір сховища...</div>
+            <p class="admin-hint">Назва файлу: АРТИКУЛ(колір).png, наприклад 2332(сірий).png. Перед завантаженням фото зменшуються до 1080 px (JPEG). Повторне фото тієї ж моделі й кольору замінює старе.</p>
+            <input type="file" id="photo-files" multiple accept="image/*,.heic,.heif" style="margin-bottom: 15px; font-family: Nunito;">
+            <button id="photo-upload-btn" class="btn-upload" style="background: #00C2FF;" onclick="uploadPhotosToSupabase()">☁️ ЗАВАНТАЖИТИ ФОТО НА СЕРВЕР</button>
+            <div id="photo-status" class="admin-status" style="color: #00C2FF;"></div>
+            <div id="photo-report" class="report"></div>
+        </div>
+
+        <div class="admin-panel" style="margin-top: 20px;">
+            <h2 style="margin-top: 0;">3. Зайві файли у сховищі</h2>
+            <p class="admin-hint">Файли, які не показуються в жодній картці товару. Їх можна безпечно видалити.</p>
+            <button id="orphan-find-btn" class="btn-upload btn-secondary" onclick="findOrphans()">🔍 Знайти зайві файли</button>
+            <div id="orphan-status" class="admin-status"></div>
+            <div id="orphan-report" class="report"></div>
+            <button id="orphan-delete-btn" class="btn-upload btn-danger" style="display: none;" onclick="deleteOrphans()">🗑 Видалити зайві файли</button>
         </div>
     </div>
 
