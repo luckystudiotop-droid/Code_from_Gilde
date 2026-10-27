@@ -145,3 +145,20 @@ body { padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px)); }
 }
 
 .catalog-header { scroll-margin-top: 90px; }
+
+/* Етап 5: вікно після відправки (знизу на телефоні, по центру на комп'ютері) */
+.share-btn.busy { opacity: 0.8; }
+.share-sheet { position: fixed; inset: 0; z-index: 200; background: rgba(44, 44, 53, 0.45); display: flex; align-items: flex-end; justify-content: center; }
+.share-sheet[hidden] { display: none; }
+.share-card { background: white; width: 100%; max-width: 560px; max-height: 90vh; overflow-y: auto; border-radius: 28px 28px 0 0; padding: 22px 20px calc(20px + env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; gap: 10px; box-shadow: 0 -10px 40px rgba(0,0,0,0.15); }
+.share-title { margin: 0; font-size: 1.1rem; color: #2C2C35; }
+.share-hint { margin: 0 0 4px; color: #555; font-weight: 700; font-size: 0.95rem; white-space: pre-line; line-height: 1.4; }
+.share-preview { background: #F5F5F7; border-radius: 16px; padding: 12px 14px; font-size: 0.85rem; color: #2C2C35; white-space: pre-wrap; max-height: 180px; overflow-y: auto; user-select: text; -webkit-user-select: text; }
+.sheet-btn { width: 100%; min-height: 48px; padding: 14px; border-radius: 18px; border: none; background: #F0F0F5; color: #2C2C35; font-weight: 800; font-size: 1rem; cursor: pointer; }
+.sheet-btn.primary { background: linear-gradient(135deg, #FF2A85 0%, #00C2FF 100%); color: white; }
+.sheet-btn.done { background: #34C759; color: white; }
+.sheet-close { background: none; border: none; color: #888; font-weight: 700; padding: 10px; cursor: pointer; font-size: 0.95rem; }
+@media (min-width: 700px) {
+    .share-sheet { align-items: center; }
+    .share-card { border-radius: 28px; padding-bottom: 22px; }
+}

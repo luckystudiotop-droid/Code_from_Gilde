@@ -220,6 +220,7 @@ function addGroup(key) {
         ? [size]
         : g.items.map(p => p.size_index);
     selectedGroups.set(key, { group: g, sizes });
+    prefetchPhoto(g); // фото готуємо заздалегідь, щоб меню «Поділитися» відкрилось миттєво
     return true;
 }
 
@@ -268,53 +269,193 @@ function customerLine(group, sizes) {
     return `${title} — ${items.map(p => `${sizeLabel(p)} — ${formatPrice(p.price)}`).join('; ')}`;
 }
 
+// =====================================================================
+// ВІДПРАВКА КЛІЄНТУ: телефон — системне меню «Поділитися», комп'ютер — файли
+// =====================================================================
+
+const photoFiles = new Map();    // url -> File (або null, якщо не вдалося)
+const photoLoading = new Map();  // url -> Promise
+let pendingShareFiles = [];
+let lastShareText = '';
+
+function prefetchPhoto(group) {
+    const url = group.photo;
+    if (!url || photoFiles.has(url) || photoLoading.has(url)) return;
+    const name = `${slugify(group.base)}_${slugify(group.color || 'foto')}.jpg`;
+    const promise = fetch(url)
+        .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.blob(); })
+        .then(blob => photoFiles.set(url, new File([blob], name, { type: blob.type || 'image/jpeg' })))
+        .catch(e => { console.error('Фото не завантажилось', url, e); photoFiles.set(url, null); })
+        .finally(() => photoLoading.delete(url));
+    photoLoading.set(url, promise);
+}
+
+async function waitForPhotos(groups) {
+    groups.forEach(g => {
+        if (g.photo && photoFiles.get(g.photo) === null) photoFiles.delete(g.photo); // ще одна спроба
+        prefetchPhoto(g);
+    });
+    await Promise.all(groups.map(g => photoLoading.get(g.photo)).filter(Boolean));
+}
+
+const photosReady = groups => groups.every(g => !g.photo || photoFiles.has(g.photo));
+const readyFiles = groups => groups.map(g => photoFiles.get(g.photo)).filter(Boolean);
+const failedCount = groups => groups.filter(g => g.photo && photoFiles.get(g.photo) === null).length;
+
+// Телефон/планшет з підтримкою передачі файлів
+function canShareFiles() {
+    if (!navigator.canShare || !window.matchMedia('(pointer: coarse)').matches) return false;
+    try { return navigator.canShare({ files: [new File(['x'], 'test.jpg', { type: 'image/jpeg' })] }); }
+    catch (e) { return false; }
+}
+
+async function copyText(text) {
+    try {
+        await navigator.clipboard.writeText(text);
+        return true;
+    } catch (e) {
+        // запасний спосіб для старих браузерів
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.setAttribute('readonly', '');
+        ta.style.position = 'fixed'; ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        let ok = false;
+        try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+        document.body.removeChild(ta);
+        return ok;
+    }
+}
+
+function buildCustomerText() {
+    let text = 'Вітаємо! Ось що є в наявності за вашим запитом:\n\n';
+    for (const { group, sizes } of selectedGroups.values()) text += customerLine(group, sizes) + '\n';
+    return text;
+}
+
+function setShareBusy(busy) {
+    const btn = document.querySelector('.share-btn');
+    btn.disabled = busy;
+    btn.classList.toggle('busy', busy);
+    if (busy) { btn.dataset.label = btn.innerHTML; btn.innerHTML = '⏳ Готуємо фото...'; }
+    else if (btn.dataset.label) { btn.innerHTML = btn.dataset.label; }
+}
+
 async function shareToInstagram() {
     if (selectedGroups.size === 0) return;
-    const actionBtn = document.querySelector('.share-btn');
-    const originalText = actionBtn.innerText;
-    actionBtn.innerText = "⏳ Завантажуємо...";
-    actionBtn.disabled = true;
+    const groups = [...selectedGroups.values()].map(s => s.group);
+    lastShareText = buildCustomerText();
+    const copied = copyText(lastShareText); // запускаємо одразу, у момент натискання
 
-    let textToCopy = "Вітаємо! Ось що є в наявності за вашим запитом:\n\n";
-    let downloadedCount = 0;
-
-    try {
-        for (const { group, sizes } of selectedGroups.values()) {
-            textToCopy += customerLine(group, sizes) + '\n';
-
-            if (group.photo) {
-                try {
-                    // Витягуємо фото з сервера і перетворюємо на файл для завантаження
-                    const response = await fetch(group.photo);
-                    const blob = await response.blob();
-                    const blobUrl = URL.createObjectURL(blob);
-
-                    const link = document.createElement('a');
-                    link.href = blobUrl;
-                    link.download = `${group.base}_${group.color || 'фото'}.jpg`;
-                    document.body.appendChild(link);
-                    link.click();
-                    document.body.removeChild(link);
-                    URL.revokeObjectURL(blobUrl);
-
-                    downloadedCount++;
-                    // Невелика пауза, щоб браузер не заблокував масове завантаження
-                    await new Promise(resolve => setTimeout(resolve, 300));
-                } catch (e) {
-                    console.error("Помилка завантаження фото", e);
-                }
-            }
+    if (canShareFiles()) {
+        if (photosReady(groups)) {
+            // Фото вже в пам'яті — відкриваємо меню в межах цього ж натискання
+            await shareFiles(readyFiles(groups), copied, failedCount(groups));
+        } else {
+            setShareBusy(true);
+            await waitForPhotos(groups);
+            setShareBusy(false);
+            pendingShareFiles = readyFiles(groups);
+            openShareSheet('ready', { copied: await copied, files: pendingShareFiles.length, failed: failedCount(groups) });
         }
-
-        await navigator.clipboard.writeText(textToCopy);
-        alert(`✅ Текст із цінами скопійовано!\n📥 Збережено фото: ${downloadedCount} шт.\n\nПерейдіть в Instagram, вставте текст і додайте фото.`);
-    } catch (err) {
-        alert("Виникла помилка при копіюванні тексту.");
-    } finally {
-        actionBtn.innerText = originalText;
-        actionBtn.disabled = false;
-        resetFilters();
+        return;
     }
+
+    // Комп'ютер: зберігаємо фото окремими файлами
+    setShareBusy(true);
+    await waitForPhotos(groups);
+    let saved = 0;
+    for (const file of readyFiles(groups)) {
+        const url = URL.createObjectURL(file);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        saved++;
+        await new Promise(r => setTimeout(r, 300)); // щоб браузер не заблокував масове збереження
+    }
+    setShareBusy(false);
+    openShareSheet('downloaded', { copied: await copied, files: saved, failed: failedCount(groups) });
+}
+
+async function shareFiles(files, copiedPromise, failed = 0) {
+    pendingShareFiles = files;
+    if (!files.length) {
+        openShareSheet('nofiles', { copied: await copiedPromise, files: 0, failed });
+        return;
+    }
+    try {
+        await navigator.share({ files });
+        openShareSheet('shared', { copied: await copiedPromise, files: files.length, failed });
+    } catch (e) {
+        if (e.name === 'AbortError') return; // меню закрили — вибір лишається
+        if (e.name === 'NotAllowedError') { // браузер вимагає ще одне натискання
+            openShareSheet('ready', { copied: await copiedPromise, files: files.length, failed });
+            return;
+        }
+        console.error(e);
+        openShareSheet('error', { copied: await copiedPromise, files: files.length, failed, message: e.message });
+    }
+}
+
+// Кнопка у вікні — нове натискання, тому меню «Поділитися» точно відкриється
+function shareFilesAgain() {
+    shareFiles(pendingShareFiles, Promise.resolve(true));
+}
+
+async function copyShareTextAgain() {
+    const ok = await copyText(lastShareText);
+    document.getElementById('share-hint').innerText = ok
+        ? '📋 Текст скопійовано. У чаті клієнта утримайте поле вводу і натисніть «Вставити».'
+        : '❌ Не вдалося скопіювати. Виділіть текст нижче вручну.';
+}
+
+function openShareSheet(state, info) {
+    const titles = {
+        shared: `✅ Фото передано: ${info.files}`,
+        ready: `📷 Фото готові: ${info.files}`,
+        downloaded: `📥 Збережено фото: ${info.files}`,
+        nofiles: '📋 У вибраних товарів немає фото',
+        error: '❌ Не вдалося відкрити меню «Поділитися»'
+    };
+    const hints = {
+        shared: 'Текст із цінами скопійовано — у чаті клієнта утримайте поле вводу і натисніть «Вставити».',
+        ready: 'Натисніть «Поділитися фото» → Instagram → чат клієнта. Текст із цінами вже скопійовано.',
+        downloaded: 'Текст скопійовано. Відкрийте Instagram, вставте текст і додайте збережені фото.',
+        nofiles: 'Текст скопійовано — вставте його в чат клієнта.',
+        error: `Спробуйте ще раз. ${info.message || ''}`
+    };
+    let hint = hints[state];
+    if (!info.copied) hint += '\n⚠️ Текст не скопіювався автоматично — натисніть «Скопіювати текст».';
+    if (info.failed) hint += `\n⚠️ Не вдалося завантажити фото: ${info.failed}.`;
+
+    document.getElementById('share-title').innerText = titles[state];
+    document.getElementById('share-hint').innerText = hint;
+    document.getElementById('share-preview').innerText = lastShareText;
+
+    const againBtn = document.getElementById('share-again-btn');
+    const showAgain = (state === 'ready' || state === 'error' || state === 'shared') && pendingShareFiles.length > 0;
+    againBtn.style.display = showAgain ? 'block' : 'none';
+    againBtn.innerText = state === 'shared' ? '📤 Поділитися ще раз' : '📤 Поділитися фото';
+    againBtn.classList.toggle('primary', state !== 'shared');
+
+    document.getElementById('share-sheet').hidden = false;
+}
+
+function closeShareSheet() {
+    document.getElementById('share-sheet').hidden = true;
+}
+
+// Відправлено — очищаємо екран для наступного клієнта
+function finishShare() {
+    closeShareSheet();
+    photoFiles.clear();
+    pendingShareFiles = [];
+    resetFilters();
 }
 
 // =====================================================================
