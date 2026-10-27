@@ -1,6 +1,9 @@
 const SUPABASE_URL = 'https://ckivnxtnjdnonjavsgon.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNraXZueHRuamRub25qYXZzZ29uIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTIzNjA4NDIsImV4cCI6MjEwNzkzNjg0Mn0.jrHwOdeFZrOlwfl7FEyn2JStn8DQ3m4GeRHlHbgBBwU';
-const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+// Сесія адміна живе тільки до закриття вкладки (sessionStorage)
+const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
+    auth: { storage: window.sessionStorage, persistSession: true, autoRefreshToken: true }
+});
 
 // Налаштування фото та сховища
 const PHOTO_BUCKET = 'product-photos';
@@ -66,6 +69,8 @@ function getFilteredProducts() {
     if (filters.gender) filtered = filtered.filter(p => p.gender === filters.gender);
     if (filters.categories.size > 0) filtered = filtered.filter(p => filters.categories.has(p.category));
     if (filters.size) filtered = filtered.filter(p => p.size_index === parseInt(filters.size));
+    // Товари без фото — в самий кінець (sort стабільний, порядок решти не змінюється)
+    filtered.sort((a, b) => (a.photo_url ? 0 : 1) - (b.photo_url ? 0 : 1));
     return filtered;
 }
 
@@ -198,31 +203,73 @@ async function shareToInstagram() {
     }
 }
 
-function toggleAdmin() {
-    const adminScreen = document.getElementById('admin-screen');
-    const sellerScreen = document.getElementById('seller-screen');
-    const actionBar = document.getElementById('action-bar');
+// =====================================================================
+// ВХІД В АДМІНКУ (Supabase Auth)
+// =====================================================================
 
-    // Якщо адмінка закрита і ми хочемо в неї зайти
-    if (!adminScreen.classList.contains('active')) {
-        const pass = prompt("Введіть пароль для доступу до бази даних:");
-        
-        // Твій пароль. Можеш змінити "1234" на щось інше.
-        if (pass === "2026") {
-            sellerScreen.classList.remove('active');
-            actionBar.style.display = 'none'; // Ховаємо кошик
-            adminScreen.classList.add('active');
-            refreshStorageUsage();
-        } else if (pass !== null) {
-            alert("❌ Невірний пароль!");
-        }
+function showScreen(id) {
+    ['seller-screen', 'login-screen', 'admin-screen'].forEach(s =>
+        document.getElementById(s).classList.toggle('active', s === id));
+    if (id === 'seller-screen') updateActionBar();
+    else document.getElementById('action-bar').style.display = 'none';
+}
+
+// Кнопка ⚙️: з вітрини — в адмінку (або на вхід), з адмінки/входу — назад у вітрину
+async function toggleAdmin() {
+    if (!document.getElementById('seller-screen').classList.contains('active')) {
+        showScreen('seller-screen');
+        return;
+    }
+    const { data: { session } } = await db.auth.getSession();
+    if (session) {
+        openAdmin(session);
     } else {
-        // Якщо ми хочемо ВИЙТИ з адмінки назад у вітрину
-        adminScreen.classList.remove('active');
-        sellerScreen.classList.add('active');
-        updateActionBar(); // Повертаємо кошик, якщо там щось є
+        document.getElementById('login-status').innerText = '';
+        showScreen('login-screen');
+        document.getElementById('login-email').focus();
     }
 }
+
+function openAdmin(session) {
+    document.getElementById('admin-user').innerText = `👤 ${session.user.email}`;
+    showScreen('admin-screen');
+    refreshStorageUsage();
+}
+
+async function doLogin(event) {
+    event.preventDefault();
+    const btn = document.getElementById('login-btn');
+    const statusDiv = document.getElementById('login-status');
+    const email = document.getElementById('login-email').value.trim();
+    const password = document.getElementById('login-password').value;
+
+    btn.disabled = true;
+    statusDiv.innerText = '⏳ Вхід...';
+    const { data, error } = await db.auth.signInWithPassword({ email, password });
+    btn.disabled = false;
+
+    if (error) {
+        statusDiv.innerText = /invalid/i.test(error.message)
+            ? '❌ Невірний email або пароль.'
+            : `❌ Помилка входу: ${error.message}`;
+        return;
+    }
+    statusDiv.innerText = '';
+    document.getElementById('login-password').value = '';
+    openAdmin(data.session);
+}
+
+async function doLogout() {
+    await db.auth.signOut();
+    showScreen('seller-screen');
+}
+
+// Якщо сесія закінчилась, поки відкрита адмінка, — повертаємо на вхід
+db.auth.onAuthStateChange(event => {
+    if (event === 'SIGNED_OUT' && document.getElementById('admin-screen').classList.contains('active')) {
+        showScreen('login-screen');
+    }
+});
 
 // Функції адмінки
 // Функції адмінки
@@ -337,6 +384,7 @@ function normColor(value) {
     if (/[а-яіїєґ]/.test(s)) s = s.replace(/[aceiopxyk]/g, ch => LATIN_LOOKALIKES[ch]);
     s = s.replace(/мята/g, "м'ята").replace(/прінт/g, 'принт');
     s = s.replace(/[^a-zа-яіїєґё0-9'\s-]/g, ' ');
+    s = s.replace(/-/g, ' '); // "світло сірий" = "світло-сірий"
     return s.replace(/\s+/g, ' ').trim();
 }
 

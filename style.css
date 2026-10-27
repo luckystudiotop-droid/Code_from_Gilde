@@ -92,3 +92,9 @@ h1, h2, h3 { font-family: 'Unbounded', sans-serif; }
 .btn-upload:disabled { opacity: 0.6; cursor: wait; }
 .btn-secondary { background: #F0F0F5; color: #2C2C35; }
 .btn-danger { background: #FF3B30; margin-top: 15px; }
+
+/* Вхід в адмінку */
+.text-input { width: 100%; padding: 14px 16px; border-radius: 16px; border: 1px solid #F0E8EB; background: #FCF9FA; font-size: 1rem; font-family: inherit; font-weight: 700; color: #2C2C35; margin-bottom: 12px; }
+.text-input:focus { outline: 2px solid #FF2A85; border-color: transparent; }
+.admin-userbar { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-bottom: 20px; font-weight: 700; color: #888; word-break: break-all; }
+.logout-btn { background: #FFF0F0; color: #FF3B30; border: none; padding: 10px 16px; border-radius: 16px; font-weight: 800; cursor: pointer; flex-shrink: 0; }
