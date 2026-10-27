@@ -342,13 +342,37 @@ function setShareBusy(busy) {
     else if (btn.dataset.label) { btn.innerHTML = btn.dataset.label; }
 }
 
+// Instagram на Android приймає в «Повідомлення» лише одне фото через «Поділитися»
+const isAndroid = /Android/i.test(navigator.userAgent);
+
+// Зберігає фото окремими файлами (комп'ютер і Android): повертає кількість
+async function downloadFiles(groups) {
+    await waitForPhotos(groups);
+    let saved = 0;
+    for (const file of readyFiles(groups)) {
+        const url = URL.createObjectURL(file);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = file.name;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setTimeout(() => URL.revokeObjectURL(url), 2000);
+        saved++;
+        await new Promise(r => setTimeout(r, 400)); // щоб браузер не заблокував масове збереження
+    }
+    return saved;
+}
+
 async function shareToInstagram() {
     if (selectedGroups.size === 0) return;
     const groups = [...selectedGroups.values()].map(s => s.group);
+    const photoCount = groups.filter(g => g.photo).length;
     lastShareText = buildCustomerText();
     const copied = copyText(lastShareText); // запускаємо одразу, у момент натискання
 
-    if (canShareFiles()) {
+    // Телефон: меню «Поділитися» (на Android — тільки коли фото одне)
+    if (canShareFiles() && !(isAndroid && photoCount > 1)) {
         if (photosReady(groups)) {
             // Фото вже в пам'яті — відкриваємо меню в межах цього ж натискання
             await shareFiles(readyFiles(groups), copied, failedCount(groups));
@@ -362,24 +386,12 @@ async function shareToInstagram() {
         return;
     }
 
-    // Комп'ютер: зберігаємо фото окремими файлами
+    // Android з кількома фото і комп'ютер: зберігаємо фото файлами
     setShareBusy(true);
-    await waitForPhotos(groups);
-    let saved = 0;
-    for (const file of readyFiles(groups)) {
-        const url = URL.createObjectURL(file);
-        const link = document.createElement('a');
-        link.href = url;
-        link.download = file.name;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-        setTimeout(() => URL.revokeObjectURL(url), 2000);
-        saved++;
-        await new Promise(r => setTimeout(r, 300)); // щоб браузер не заблокував масове збереження
-    }
+    const saved = await downloadFiles(groups);
     setShareBusy(false);
-    openShareSheet('downloaded', { copied: await copied, files: saved, failed: failedCount(groups) });
+    pendingShareFiles = [];
+    openShareSheet(isAndroid ? 'savedAndroid' : 'downloaded', { copied: await copied, files: saved, failed: failedCount(groups) });
 }
 
 async function shareFiles(files, copiedPromise, failed = 0) {
@@ -419,6 +431,7 @@ function openShareSheet(state, info) {
         shared: `✅ Фото передано: ${info.files}`,
         ready: `📷 Фото готові: ${info.files}`,
         downloaded: `📥 Збережено фото: ${info.files}`,
+        savedAndroid: `📥 Фото збережено в галерею: ${info.files}`,
         nofiles: '📋 У вибраних товарів немає фото',
         error: '❌ Не вдалося відкрити меню «Поділитися»'
     };
@@ -426,6 +439,7 @@ function openShareSheet(state, info) {
         shared: 'Текст із цінами скопійовано — у чаті клієнта утримайте поле вводу і натисніть «Вставити».',
         ready: 'Натисніть «Поділитися фото» → Instagram → чат клієнта. Текст із цінами вже скопійовано.',
         downloaded: 'Текст скопійовано. Відкрийте Instagram, вставте текст і додайте збережені фото.',
+        savedAndroid: `1. Відкрийте чат клієнта в Instagram.\n2. Натисніть іконку галереї та відмітьте ${info.files} останніх фото → надішліть.\n3. Утримайте поле вводу → «Вставити» (текст із цінами вже скопійовано).`,
         nofiles: 'Текст скопійовано — вставте його в чат клієнта.',
         error: `Спробуйте ще раз. ${info.message || ''}`
     };
